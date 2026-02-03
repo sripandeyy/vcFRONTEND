@@ -10,6 +10,7 @@ import ControlBar from './room/ControlBar';
 import ChatPanel from './room/ChatPanel';
 import Whiteboard from './room/Whiteboard';
 import WatchTogether from './room/WatchTogether';
+import SettingsModal from './room/SettingsModal';
 
 interface VideoRoomProps {
     roomId: string;
@@ -33,6 +34,7 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
     const [showChat, setShowChat] = useState(false);
     const [showWhiteboard, setShowWhiteboard] = useState(false);
     const [showWatchTogether, setShowWatchTogether] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
     const [activeSpeaker, setActiveSpeaker] = useState<string | null>(null);
 
     const userVideo = useRef<HTMLVideoElement>(null);
@@ -261,6 +263,60 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
         }
     };
 
+    const toggleScreenShare = () => {
+        if (!isSharing) {
+            navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+                .then(screenStream => {
+                    const screenTrack = screenStream.getVideoTracks()[0];
+
+                    Object.keys(peersRef.current).forEach(peerId => {
+                        const peer = peersRef.current[peerId];
+                        // Replace video track in peer connection
+                        // Simple Peer doesn't strictly expose replaceTrack in its types, so we use _pc (RTCPeerConnection)
+                        const sender = (peer as any)._pc.getSenders().find((s: any) => s.track?.kind === 'video');
+                        if (sender) {
+                            sender.replaceTrack(screenTrack);
+                        }
+                    });
+
+                    // Update local video view
+                    if (userVideo.current) {
+                        userVideo.current.srcObject = screenStream;
+                    }
+
+                    screenTrack.onended = () => {
+                        stopScreenSharing();
+                    };
+
+                    setIsSharing(true);
+                })
+                .catch(err => {
+                    console.error("Failed to share screen:", err);
+                });
+        } else {
+            stopScreenSharing();
+        }
+    };
+
+    const stopScreenSharing = () => {
+        if (!localStreamRef.current) return;
+        const videoTrack = localStreamRef.current.getVideoTracks()[0];
+
+        Object.keys(peersRef.current).forEach(peerId => {
+            const peer = peersRef.current[peerId];
+            const sender = (peer as any)._pc.getSenders().find((s: any) => s.track?.kind === 'video');
+            if (sender) {
+                sender.replaceTrack(videoTrack);
+            }
+        });
+
+        if (userVideo.current) {
+            userVideo.current.srcObject = localStreamRef.current;
+        }
+
+        setIsSharing(false);
+    };
+
     return (
         <div className="h-screen w-full bg-[#09090b] flex flex-col overflow-hidden text-white font-sans selection:bg-purple-500/30">
             {/* Room Info Overlay */}
@@ -339,13 +395,26 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
                 showWatchTogether={showWatchTogether}
                 onToggleMic={toggleMic}
                 onToggleVideo={toggleVideo}
-                onToggleShare={() => { }}
+                onToggleShare={toggleScreenShare}
                 onToggleChat={() => setShowChat(!showChat)}
                 onToggleWhiteboard={() => setShowWhiteboard(!showWhiteboard)}
                 onToggleWatchTogether={() => setShowWatchTogether(!showWatchTogether)}
+                onToggleSettings={() => setShowSettings(true)}
                 onLeave={onLeave}
             />
 
+            <div className="hidden">
+                {/* Invisible trigger for settings from ControlBar until we refactor ControlBar to accept onToggleSettings directly if we must, 
+                     but actually check ControlBar props. ControlBar HAS onToggleProp? 
+                     Wait, ControlBar definition has onToggleMic, Video, Share, Chat, Whiteboard, WatchTogether, Leave. 
+                     It DOES NOT have onToggleSettings in the Interface! I need to update ControlBar interface too.
+                     OR, I can just hijacking one of the onclicks or passing it inline. 
+                     Actually, ControlBar line 113 is onClick={() => { }}. 
+                     I should update ControlBar first to accept onToggleSettings prop.
+                  */}
+            </div>
+
+            <SettingsModal isVisible={showSettings} onClose={() => setShowSettings(false)} />
             <ChatPanel socket={socket} roomId={roomId} userName={userName} isVisible={showChat} onClose={() => setShowChat(false)} />
             <Whiteboard socket={socket} roomId={roomId} isVisible={showWhiteboard} onClose={() => setShowWhiteboard(false)} />
             <WatchTogether socket={socket} roomId={roomId} isVisible={showWatchTogether} onClose={() => setShowWatchTogether(false)} />

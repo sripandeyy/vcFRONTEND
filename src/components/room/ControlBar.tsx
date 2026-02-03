@@ -22,6 +22,7 @@ interface ControlBarProps {
     onToggleChat: () => void;
     onToggleWhiteboard: () => void;
     onToggleWatchTogether: () => void;
+    onToggleSettings: () => void;
     onLeave: () => void;
 }
 
@@ -29,7 +30,7 @@ export default function ControlBar({
     isMuted, isVideoOff, isSharing, showChat,
     showWhiteboard, showWatchTogether,
     onToggleMic, onToggleVideo, onToggleShare, onToggleChat,
-    onToggleWhiteboard, onToggleWatchTogether, onLeave
+    onToggleWhiteboard, onToggleWatchTogether, onToggleSettings, onLeave
 }: ControlBarProps) {
 
     const ControlButton = ({
@@ -110,7 +111,7 @@ export default function ControlBar({
             <div className="pl-6 flex items-center gap-3">
                 <ControlButton
                     icon={Settings}
-                    onClick={() => { }}
+                    onClick={onToggleSettings}
                     label="Settings"
                 />
                 <ControlButton
