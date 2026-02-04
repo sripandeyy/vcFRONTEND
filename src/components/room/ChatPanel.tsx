@@ -28,6 +28,7 @@ export default function ChatPanel({ socket, roomId, userName, isVisible, onClose
     useEffect(() => {
         if (!socket) return;
         socket.on('receive-message', (message: Message) => {
+            console.log("ChatPanel: Received message:", message);
             setMessages(prev => [...prev, message]);
         });
         return () => socket.off('receive-message');
@@ -49,6 +50,7 @@ export default function ChatPanel({ socket, roomId, userName, isVisible, onClose
             socketId: socket.id,
         };
 
+        console.log("ChatPanel: Sending message:", message, "to room:", roomId);
         socket.emit('send-message', { roomId, message });
         setInputText('');
     };
@@ -64,7 +66,12 @@ export default function ChatPanel({ socket, roomId, userName, isVisible, onClose
                     className="fixed top-24 bottom-24 right-6 w-96 glass rounded-[2rem] z-40 flex flex-col overflow-hidden shadow-2xl"
                 >
                     <div className="p-6 border-b border-zinc-700/50 flex items-center justify-between">
-                        <h3 className="text-xl font-bold text-white">In-call Messages</h3>
+                        <div>
+                            <h3 className="text-xl font-bold text-white">In-call Messages</h3>
+                            <p className="text-[10px] text-zinc-500">
+                                {socket.connected ? 'Connected' : 'Disconnected'} ({socket.id?.substr(0, 6)})
+                            </p>
+                        </div>
                         <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-xl transition-colors">
                             <X className="w-5 h-5 text-zinc-400" />
                         </button>

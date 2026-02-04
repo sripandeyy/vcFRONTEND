@@ -10,25 +10,38 @@ interface WatchTogetherProps {
     roomId: string;
     isVisible: boolean;
     onClose: () => void;
+    syncedVideoId?: string | null;
 }
 
-export default function WatchTogether({ socket, roomId, isVisible, onClose }: WatchTogetherProps) {
+export default function WatchTogether({ socket, roomId, isVisible, onClose, syncedVideoId }: WatchTogetherProps) {
     const [videoUrl, setVideoUrl] = useState('');
     const [videoId, setVideoId] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
 
     useEffect(() => {
+        if (syncedVideoId) {
+            setVideoId(syncedVideoId);
+        }
+    }, [syncedVideoId]);
+
+    useEffect(() => {
         if (!socket) return;
 
-        socket.on('video-action', (payload: any) => {
+        console.log('WatchTogether: Registering socket listener');
+        const handleVideoAction = (payload: any) => {
+            console.log('WatchTogether: Video action received', payload);
             const { action, data } = payload;
             if (action === 'load') {
                 setVideoId(data.videoId);
             }
-            // In a real app, we'd sync time and playback state here
-        });
+        };
 
-        return () => socket.off('video-action');
+        socket.on('video-action', handleVideoAction);
+
+        return () => {
+            console.log('WatchTogether: Cleaning up socket listener');
+            socket.off('video-action', handleVideoAction);
+        };
     }, [socket]);
 
     const extractVideoId = (url: string) => {
@@ -40,9 +53,13 @@ export default function WatchTogether({ socket, roomId, isVisible, onClose }: Wa
     const handleLoadVideo = (e?: React.FormEvent) => {
         if (e) e.preventDefault();
         const id = extractVideoId(videoUrl);
+        console.log("Extracted ID from URL:", videoUrl, "->", id);
+
         if (id) {
             setVideoId(id);
             socket.emit('video-action', { roomId, action: 'load', data: { videoId: id } });
+        } else {
+            alert("Invalid YouTube URL! We could not extract the ID.\nTry copying the full link from the address bar.");
         }
     };
 
@@ -99,6 +116,10 @@ export default function WatchTogether({ socket, roomId, isVisible, onClose }: Wa
                                             Load
                                         </button>
                                     </form>
+                                    {/* DEBUG INFO */}
+                                    <p className="text-xs text-zinc-600 text-center">
+                                        Debug: SyncedID: {syncedVideoId || 'None'} | LocalID: {videoId || 'None'}
+                                    </p>
                                 </div>
                             ) : (
                                 <div className="flex-1 w-full relative">

@@ -1,5 +1,15 @@
 "use client";
 
+if (typeof window !== 'undefined') {
+    (window as any).global = window;
+    if (!(window as any).process) {
+        (window as any).process = {
+            nextTick: (fn: any) => setTimeout(fn, 0),
+            browser: true,
+            env: {}
+        };
+    }
+}
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { socket } from '@/lib/socket';
@@ -36,6 +46,7 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
     const [showWatchTogether, setShowWatchTogether] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [activeSpeaker, setActiveSpeaker] = useState<string | null>(null);
+    const [globalVideoId, setGlobalVideoId] = useState<string | null>(null);
 
     const userVideo = useRef<HTMLVideoElement>(null);
     const peersRef = useRef<{ [key: string]: Peer.Instance }>({});
@@ -43,18 +54,7 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
     const mountedRef = useRef(true);
 
     useEffect(() => {
-        mountedRef.current = true;
-
-        if (typeof window !== 'undefined') {
-            (window as any).global = window;
-            if (!(window as any).process) {
-                (window as any).process = {
-                    nextTick: (fn: any) => setTimeout(fn, 0),
-                    browser: true,
-                    env: {}
-                };
-            }
-        }
+        let isCancelled = false;
 
         const cleanup = () => {
             console.log('Cleaning up VideoRoom...');
@@ -63,14 +63,18 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
             socket.off('signal');
             socket.off('user-left');
             socket.off('connect');
+            socket.off('video-action');
             socket.disconnect();
 
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach(track => track.stop());
+                localStreamRef.current = null;
             }
 
             Object.keys(peersRef.current).forEach(id => {
-                peersRef.current[id].destroy();
+                if (peersRef.current[id]) {
+                    peersRef.current[id].destroy();
+                }
                 delete peersRef.current[id];
             });
             setPeers([]);
@@ -79,7 +83,8 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
         const init = async () => {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                if (!mountedRef.current) {
+                if (isCancelled) {
+                    console.log('Init cancelled after getUserMedia, stopping tracks');
                     stream.getTracks().forEach(track => track.stop());
                     return;
                 }
@@ -108,7 +113,7 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
                 }
 
                 socket.on('all-users', (usersArray: Array<{ socketId: string, userName: string }>) => {
-                    if (!mountedRef.current) return;
+                    if (isCancelled) return;
                     console.log('Server reported existing users:', usersArray);
                     usersArray.forEach((user) => {
                         initializePeer(user.socketId, true, stream, user.userName);
@@ -116,35 +121,32 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
                 });
 
                 socket.on('user-joined', (payload: { socketId: string; userName: string }) => {
-                    if (!mountedRef.current) return;
+                    if (isCancelled) return;
                     console.log('New user joined room:', payload.socketId);
                     initializePeer(payload.socketId, false, stream, payload.userName);
                 });
 
                 socket.on('signal', (payload: { signal: any; from: string }) => {
-                    if (!mountedRef.current) return;
+                    if (isCancelled) return;
 
                     const peer = peersRef.current[payload.from];
 
                     if (peer) {
-                        // FIX: If we receive an OFFER but are already connected/stable, ignore it.
-                        // This prevents "Failed to set local answer sdp: Called in wrong state: stable"
-                        if (payload.signal.type === 'offer' && (peer as any)._pc?.signalingState === 'stable') {
-                            console.log('Ignoring duplicate/redundant OFFER for stable peer:', payload.from);
-                            return;
-                        }
-
                         try {
-                            if (!peer.destroyed) {
-                                peer.signal(payload.signal);
+                            if (peer.destroyed) return;
+
+                            // FIX: Ignore duplicate offers if we are already connected.
+                            if (payload.signal.type === 'offer' && (peer as any).connected) {
+                                console.log('Ignoring redundant OFFER because peer is already connected');
+                                return;
                             }
+
+                            peer.signal(payload.signal);
                         } catch (err) {
                             const message = err instanceof Error ? err.message : String(err);
                             console.warn('Signal error:', message);
                         }
                     } else if (payload.signal.type === 'offer') {
-                        // Only create a new peer if we receive an OFFER. 
-                        // Receiving an answer/candidate for a non-existent peer is invalid.
                         console.log('Signal (OFFER) from unknown peer, initializing as non-initiator:', payload.from);
                         const newPeer = initializePeer(payload.from, false, localStreamRef.current!);
                         newPeer.signal(payload.signal);
@@ -154,13 +156,32 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
                 });
 
                 socket.on('user-left', (payload: { socketId: string }) => {
-                    if (!mountedRef.current) return;
+                    if (isCancelled) return;
                     console.log('User left, destroying peer:', payload.socketId);
                     if (peersRef.current[payload.socketId]) {
                         peersRef.current[payload.socketId].destroy();
                         delete peersRef.current[payload.socketId];
                     }
                     setPeers(prev => prev.filter(p => p.socketId !== payload.socketId));
+                });
+
+                socket.on('video-action', (payload: any) => {
+                    if (isCancelled) return;
+                    console.log('Video action received globally:', payload);
+                    const { action, data } = payload;
+
+                    if (action === 'load') {
+                        setShowWatchTogether(true);
+                        // Robust fallback extraction
+                        const remoteId = data?.videoId || payload?.videoId || payload?.data;
+                        // Note: sometimes people send string as data directly, though our sender doesn't.
+
+                        if (remoteId && typeof remoteId === 'string') {
+                            setGlobalVideoId(remoteId);
+                        } else {
+                            console.warn("Received load action but NO valid ID found in:", payload);
+                        }
+                    }
                 });
 
                 setupAudioAnalysis(stream);
@@ -170,10 +191,17 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
             }
         };
 
+        // Ensure we cleaner up any previous listeners before starting new ones, 
+        // essentially a "soft" cleanup if the socket was left open.
+        // Ensure we cleaner up any previous listeners before starting new ones, 
+        // essentially a "soft" cleanup if the socket was left open.
+        // socket.removeAllListeners(); // REMOVED: This was removing event listeners from child components (like ChatPanel)
+
+
         init();
 
         return () => {
-            mountedRef.current = false;
+            isCancelled = true;
             cleanup();
         };
     }, [roomId]);
@@ -212,6 +240,11 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
             setPeers(prev => prev.map(p =>
                 p.socketId === remoteSocketId ? { ...p, stream: remoteStream } : p
             ));
+        });
+
+        peer.on('connect', () => {
+            console.log('Peer connected fully:', remoteSocketId);
+            // (peer as any).connected = true; // Removed: 'connected' is a read-only getter
         });
 
         peer.on('error', (err) => {
@@ -273,9 +306,12 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
                         const peer = peersRef.current[peerId];
                         // Replace video track in peer connection
                         // Simple Peer doesn't strictly expose replaceTrack in its types, so we use _pc (RTCPeerConnection)
-                        const sender = (peer as any)._pc.getSenders().find((s: any) => s.track?.kind === 'video');
-                        if (sender) {
-                            sender.replaceTrack(screenTrack);
+                        const pc = (peer as any)._pc;
+                        if (pc) {
+                            const sender = pc.getSenders().find((s: any) => s.track?.kind === 'video');
+                            if (sender) {
+                                sender.replaceTrack(screenTrack).catch((err: any) => console.error("Track replacement failed", err));
+                            }
                         }
                     });
 
@@ -304,9 +340,12 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
 
         Object.keys(peersRef.current).forEach(peerId => {
             const peer = peersRef.current[peerId];
-            const sender = (peer as any)._pc.getSenders().find((s: any) => s.track?.kind === 'video');
-            if (sender) {
-                sender.replaceTrack(videoTrack);
+            const pc = (peer as any)._pc;
+            if (pc) {
+                const sender = pc.getSenders().find((s: any) => s.track?.kind === 'video');
+                if (sender) {
+                    sender.replaceTrack(videoTrack).catch((err: any) => console.error("Track replacement failed", err));
+                }
             }
         });
 
@@ -417,7 +456,7 @@ export default function VideoRoom({ roomId, userName, onLeave }: VideoRoomProps)
             <SettingsModal isVisible={showSettings} onClose={() => setShowSettings(false)} />
             <ChatPanel socket={socket} roomId={roomId} userName={userName} isVisible={showChat} onClose={() => setShowChat(false)} />
             <Whiteboard socket={socket} roomId={roomId} isVisible={showWhiteboard} onClose={() => setShowWhiteboard(false)} />
-            <WatchTogether socket={socket} roomId={roomId} isVisible={showWatchTogether} onClose={() => setShowWatchTogether(false)} />
+            <WatchTogether socket={socket} roomId={roomId} isVisible={showWatchTogether} onClose={() => setShowWatchTogether(false)} syncedVideoId={globalVideoId} />
         </div>
     );
 }
