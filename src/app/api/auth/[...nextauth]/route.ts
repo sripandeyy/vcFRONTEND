@@ -1,13 +1,25 @@
 import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
+import { MongoClient } from "mongodb";
 
 // Use a server-side env var for backend URL in API routes
-// BACKEND_URL is server-only; NEXT_PUBLIC_SOCKET_URL is a fallback
 const BACKEND =
   process.env.BACKEND_URL ||
   process.env.NEXT_PUBLIC_SOCKET_URL ||
   'http://localhost:3001/';
+
+const MONGO_URI = process.env.MONGO_URI!;
+
+// Reuse connection across warm invocations
+let client: MongoClient | null = null;
+async function getDb() {
+  if (!client) {
+    client = new MongoClient(MONGO_URI);
+    await client.connect();
+  }
+  return client.db(); // same default DB as /api/otp route
+}
 
 const handler = NextAuth({
   providers: [
@@ -18,32 +30,59 @@ const handler = NextAuth({
     CredentialsProvider({
       name: "OTP",
       credentials: {
-        email: { label: "Email", type: "text", placeholder: "your@email.com" },
-        otp: { label: "OTP", type: "text", placeholder: "123456" }
+        email: { label: "Email", type: "text" },
+        otp:   { label: "OTP",   type: "text" }
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.otp) return null;
         try {
-          const res = await fetch(`${BACKEND}auth/verify-otp`, {
-            method: 'POST',
-            body: JSON.stringify({ email: credentials.email, otp: credentials.otp }),
-            headers: { "Content-Type": "application/json" }
+          const db    = await getDb();
+          const otps  = db.collection('otps');
+          const users = db.collection('users');
+
+          // Find matching OTP record
+          const record = await otps.findOne({
+            email: credentials.email,
+            otp:   credentials.otp,
           });
-          const data = await res.json();
-          if (data.success && data.user) {
-            return { id: data.user.id, name: data.user.name, email: data.user.email };
+          if (!record) return null;
+
+          // Check expiry
+          if (record.expiresAt && record.expiresAt < new Date()) {
+            await otps.deleteMany({ email: credentials.email });
+            return null;
           }
+
+          // Consume OTP
+          await otps.deleteMany({ email: credentials.email });
+
+          // Upsert user
+          const derivedName = credentials.email.split('@')[0];
+          const user = await users.findOneAndUpdate(
+            { email: credentials.email },
+            {
+              $setOnInsert: { email: credentials.email, name: derivedName, authProvider: 'email' },
+              $set: { isEmailVerified: true, lastSeenAt: new Date() },
+            },
+            { upsert: true, returnDocument: 'after' }
+          );
+
+          return {
+            id:    user?._id?.toString() ?? credentials.email,
+            email: credentials.email,
+            name:  (user as any)?.name ?? derivedName,
+          };
         } catch (e) {
           console.error('OTP verify failed:', e);
+          return null;
         }
-        return null;
       }
     })
   ],
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: 'jwt' },
   pages: {
-    error: '/', // redirect errors back to home instead of showing server error page
+    error: '/',
   },
   callbacks: {
     async signIn({ user, account }) {
@@ -60,7 +99,6 @@ const handler = NextAuth({
             }),
           });
         } catch (e) {
-          // Non-fatal: user can still sign in even if upsert fails
           console.error('Failed to upsert Google user to DB:', e);
         }
       }
