@@ -20,8 +20,16 @@ export default function Whiteboard({ socket, roomId, isVisible, onClose }: White
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [color, setColor] = useState('#8b5cf6');
-    const [size, setSize] = useState(3);
+    const [pencilSize, setPencilSize] = useState(3);
+    const [eraserSize, setEraserSize] = useState(20);
     const [tool, setTool] = useState<'pencil' | 'eraser'>('pencil');
+
+    const size = tool === 'pencil' ? pencilSize : eraserSize;
+
+    const setSize = (newSize: number) => {
+        if (tool === 'pencil') setPencilSize(newSize);
+        else setEraserSize(newSize);
+    };
 
     useEffect(() => {
         if (!isVisible || !canvasRef.current) return;
@@ -172,6 +180,7 @@ export default function Whiteboard({ socket, roomId, isVisible, onClose }: White
                                         "w-10 h-10 flex items-center justify-center rounded-xl transition-all",
                                         tool === 'pencil' ? "bg-purple-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-white"
                                     )}
+                                    title="Pencil"
                                 >
                                     <Pencil className="w-5 h-5" />
                                 </button>
@@ -181,9 +190,28 @@ export default function Whiteboard({ socket, roomId, isVisible, onClose }: White
                                         "w-10 h-10 flex items-center justify-center rounded-xl transition-all",
                                         tool === 'eraser' ? "bg-purple-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-white"
                                     )}
+                                    title="Eraser"
                                 >
                                     <Eraser className="w-5 h-5" />
                                 </button>
+                            </div>
+
+                            <div className="h-px w-6 bg-zinc-700/50" />
+
+                            {/* Size Slider */}
+                            <div className="h-24 w-6 flex items-center justify-center my-1 relative group">
+                                <input
+                                    type="range"
+                                    min="2"
+                                    max={tool === 'eraser' ? 100 : 30}
+                                    value={size}
+                                    onChange={(e) => setSize(Number(e.target.value))}
+                                    className="w-24 h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer -rotate-90 hover:bg-zinc-600 transition-colors accent-purple-500"
+                                />
+                                {/* Tooltip for Size */}
+                                <div className="absolute left-10 top-1/2 -translate-y-1/2 bg-black/80 px-2 py-1 rounded text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                                    Size: {size}px
+                                </div>
                             </div>
 
                             <div className="h-px w-6 bg-zinc-700/50" />
@@ -207,6 +235,7 @@ export default function Whiteboard({ socket, roomId, isVisible, onClose }: White
                             <button
                                 onClick={clearCanvas}
                                 className="w-10 h-10 flex items-center justify-center bg-zinc-800/50 hover:bg-rose-600/20 text-rose-500 rounded-xl transition-all"
+                                title="Clear Canvas"
                             >
                                 <Trash2 className="w-5 h-5" />
                             </button>

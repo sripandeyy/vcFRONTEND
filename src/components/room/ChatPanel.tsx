@@ -31,7 +31,14 @@ export default function ChatPanel({ socket, roomId, userName, isVisible, onClose
             console.log("ChatPanel: Received message:", message);
             setMessages(prev => [...prev, message]);
         });
-        return () => socket.off('receive-message');
+        socket.on('chat-history', (history: Message[]) => {
+            console.log("ChatPanel: Received chat history:", history);
+            setMessages(history);
+        });
+        return () => {
+            socket.off('receive-message');
+            socket.off('chat-history');
+        };
     }, [socket]);
 
     useEffect(() => {
