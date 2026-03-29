@@ -6,6 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { Video, User, Phone, Clock, ArrowLeft, LogOut, CheckCircle2, Edit2, Save, X, MapPin, Info, Hash, Shield } from 'lucide-react';
 
+export const dynamic = 'force-dynamic';
+
+
 interface CallLogEntry {
     roomId: string;
     joinedAt: string;
