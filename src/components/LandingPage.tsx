@@ -47,10 +47,10 @@ export default function LandingPage({ onJoin }: LandingPageProps) {
         setErrorMsg('');
         setIsSendingOtp(true);
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_SOCKET_URL}auth/send-otp`, {
+            const res = await fetch('/api/otp', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email })
+                body: JSON.stringify({ action: 'send', email })
             });
             const data = await res.json();
             if (data.success) {
@@ -59,7 +59,7 @@ export default function LandingPage({ onJoin }: LandingPageProps) {
                 setErrorMsg(data.message || 'Failed to send OTP.');
             }
         } catch (err) {
-            setErrorMsg('Network error. Is the backend running?');
+            setErrorMsg('Network error. Please try again.');
         }
         setIsSendingOtp(false);
     };
